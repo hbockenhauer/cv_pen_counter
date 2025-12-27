@@ -254,3 +254,225 @@ plot_labeled_points(points2, labels2)
 plt.legend()
 
 plt.show() 
+
+def count_classes(labels):
+    temp = labels.tolist() if type(labels) != list else labels
+    possible_labels = [0,1,2,3]
+    return np.array([temp.count(x) for x in possible_labels])
+
+
+# the target size of the patches after downsizing
+FEAT_SIZE = (9,9,3)
+
+def patch_to_vec(P):
+    
+    # YOUR CODE HERE
+    resized = skimage.transform.resize(P, FEAT_SIZE)
+    x = resized.flatten()
+    
+    return x
+
+def extract_patches(I, p1, p2, strategy=None):
+    
+    # by default, if no strategy is explicitly defined, use strategy 2
+    if strategy == 1:
+        points = sample_points_grid(I)
+    if strategy == 2 or strategy is None:
+        points = sample_points_around_pen(I, p1, p2)
+    
+    # determine the labels of the points
+    labels = make_labels_for_points(I, p1, p2, points)
+    
+    xs = []
+    for p in points:
+        P = get_patch_at_point(I, p)
+        x = patch_to_vec(P)
+        xs.append(x)
+    X = np.array(xs)
+
+    return X, labels, points
+
+def extract_multiple_images(Is, idxs, annots, strategy=None):
+    Xs = []
+    ys = []
+    points = []
+    imgids = []
+
+    for step, idx in enumerate(idxs):
+        I = Is[idx]
+        I_X, I_y, I_points = extract_patches(I, annots[idx,:2], annots[idx,2:], strategy=strategy)
+
+        classcounts = count_classes(I_y)
+        print(f'image {idx}, class count = {classcounts}')
+
+        Xs.append(I_X)
+        ys.append(I_y)
+        points.append(I_points)
+        imgids.append(np.ones(len(I_y),dtype=int)*idx)
+
+    Xs = np.vstack(Xs)
+    ys = np.hstack(ys)
+    points = np.vstack(points)
+    imgids = np.hstack(imgids)
+    
+    return Xs, ys, points, imgids
+
+X_train, y_train, points_train, imgids_train = extract_multiple_images(Is, train_imgs, annots)
+X_test, y_test, points_test, imgids_test = extract_multiple_images(Is, test_imgs, annots)
+
+def plot_samples(Ps, labels):
+    uls = np.unique(labels)
+    nclasses = len(uls)
+    nsamples = 12
+    
+    plt.figure(figsize=(10,4))
+    
+    for lidx, label in enumerate(uls):
+        idxs = np.where(labels == label)[0]
+        idxs = np.random.choice(idxs, nsamples, replace=False)
+        
+        for j, idx in enumerate(idxs):
+            P = Ps[idx,:]
+            P = P.reshape(FEAT_SIZE)
+            
+            plt.subplot(nclasses, nsamples, lidx*nsamples+j+1)
+            plt.imshow(P, clim=(0,1))
+            plt.axis('off')
+            plt.title('label: %d' % label)
+        
+    plt.show()
+
+plot_samples(X_train, y_train)
+plot_samples(X_test, y_test)
+
+
+# ----------------------------------------
+# Machine learning classifiers
+import sklearn
+from sklearn import linear_model, tree, ensemble
+sgd_clf = sklearn.linear_model.SGDClassifier(loss = 'log_loss', alpha=1e-3)
+dt_clf = sklearn.tree.DecisionTreeClassifier(max_depth=10, min_samples_leaf=20)
+rf_clf = sklearn.ensemble.RandomForestClassifier(max_depth=12, min_samples_leaf=20)
+
+# train all classifiers
+sgd_clf.fit(X_train, y_train)
+dt_clf.fit(X_train, y_train)
+rf_clf.fit(X_train, y_train)
+print("Classifiers trained.")
+
+# predict the class labels of the linear classifier on the training data
+
+y_train_pred = None # store your solution in variable name
+
+# YOUR CODE HERE
+y_train_pred = sgd_clf.predict(X_train)
+
+# evaluate training accuracy
+accuracy = sklearn.metrics.accuracy_score(y_train, y_train_pred)
+
+# You may want need to import some stuff from sklearn here
+# YOUR CODE HERE
+from sklearn.metrics import confusion_matrix
+
+def eval_classifier(clf, X, y):
+    accuracy = None # compute this (you can use sklearn)
+    confmat = None # compute this (you can use sklearn)
+    y_pred = clf.predict(X)
+    accuracy = sklearn.metrics.accuracy_score(y, y_pred)
+    confmat  = sklearn.metrics.confusion_matrix(y, y_pred)
+    
+    return accuracy, confmat
+
+def report_eval(name, accuracy, confmat):
+    print(f'*** {name} ***')
+    print(f' confusion matrix:')
+    print(confmat)
+    print(f' accuracy: {accuracy:.3f}')
+    print()
+
+print('-- TRAINING data evaluation --')
+print()
+
+# logistic regression
+sgd_train_accuracy, sgd_train_confmat = eval_classifier(sgd_clf, X_train, y_train)
+report_eval('Logistic Regression', sgd_train_accuracy, sgd_train_confmat)
+
+# decision tree
+dt_train_accuracy, dt_train_confmat = eval_classifier(dt_clf, X_train, y_train)
+report_eval('Decision Tree', dt_train_accuracy, dt_train_confmat)
+
+# random forest
+rf_train_accuracy, rf_train_confmat = eval_classifier(rf_clf, X_train, y_train)
+report_eval('Random Forest', rf_train_accuracy, rf_train_confmat)
+
+print('-- TEST data evaluation --')
+print()
+
+# logistic regression
+sgd_test_accuracy, sgd_test_confmat = eval_classifier(sgd_clf, X_test, y_test)
+report_eval('Logistic Regression', sgd_test_accuracy, sgd_test_confmat)
+
+# decision tree
+dt_test_accuracy, dt_test_confmat = eval_classifier(dt_clf, X_test, y_test)
+report_eval('Decision Tree', dt_test_accuracy, dt_test_confmat)
+
+# random forest
+rf_test_accuracy, rf_test_confmat = eval_classifier(rf_clf, X_test, y_test)
+report_eval('Random Forest', rf_test_accuracy, rf_test_confmat)
+
+
+# You may want need to import some stuff from sklearn here
+from sklearn.model_selection import cross_val_score
+import numpy as np
+
+def predict_classifier_test_accuracy(clf, X_train, y_train):
+    mean_accuracy = None # determine this
+    stddev_accuracy = None # determine this
+    
+    scores = cross_val_score(clf, X_train, y_train, cv=5, scoring='accuracy')
+    
+    mean_accuracy = np.mean(scores)
+    stddev_accuracy = np.std(scores)
+    
+    return mean_accuracy, stddev_accuracy
+
+# Let's see if it works. NOTE: this may take a while ...
+
+sgd_mean_accuracy, sgd_stddev_accuracy = predict_classifier_test_accuracy(sgd_clf, X_train, y_train)
+print('*** Logistic Regression ***')
+print('    Mean:', sgd_mean_accuracy)
+print('Std.dev.:', sgd_stddev_accuracy)
+print()
+
+dt_mean_accuracy, dt_stddev_accuracy = predict_classifier_test_accuracy(dt_clf, X_train, y_train)
+print('*** DT Classifier ***')
+print('    Mean:', dt_mean_accuracy)
+print('Std.dev.:', dt_stddev_accuracy)
+print()
+
+rf_mean_accuracy, rf_stddev_accuracy = predict_classifier_test_accuracy(rf_clf, X_train, y_train)
+print('*** RF Classifier ***')
+print('    Mean:', rf_mean_accuracy)
+print('Std.dev.:', rf_stddev_accuracy)
+print()
+
+# Compare expected accuracy to true test accuracy. Difference should be small!
+print('Comparing to test accuracy ...')
+print('*** Logistic Regression ***', np.abs(sgd_mean_accuracy - sgd_test_accuracy) < 0.1)
+print('*** DT Classifier ***', np.abs(dt_mean_accuracy - dt_test_accuracy) < 0.1)
+print('*** RF Classifier ***', np.abs(rf_mean_accuracy - rf_test_accuracy) < 0.1)
+
+
+from sklearn.model_selection import GroupKFold
+
+gkf = GroupKFold(n_splits=5)
+scores = cross_val_score(
+    rf_clf,
+    X_train,
+    y_train,
+    cv=gkf.split(X_train, y_train, groups=imgids_train)
+)
+print('RF Classifier with GroupKFold CV scores:', scores)
+print('Mean:', np.mean(scores))
+print('Std.dev.:', np.std(scores))
+
